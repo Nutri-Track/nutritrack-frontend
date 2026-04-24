@@ -102,6 +102,18 @@ jobs:
       DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
+  dev-cd:
+    needs: [dev-publish]
+    if: needs.dev-publish.result == 'success'
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_cd-template.yml@v1
+    with:
+      service-name: frontend
+      image-tag: dev-${{ github.sha }}
+      branch: develop
+      environment: development
+    secrets:
+      HELM_REPO_PAT: ${{ secrets.HELM_REPO_PAT }}
+
   # RELEASE (MAIN ONLY)
 
   publish:
