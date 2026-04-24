@@ -1,0 +1,101 @@
+name: CI/CD - Frontend
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+  release:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # PR FLOW
+
+  sast:
+    if: github.event_name == 'pull_request'
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_sast.yml@develop
+    with:
+      service-path: .
+      environment: development
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_URL: ${{ secrets.SONAR_URL }}
+
+  sca:
+    needs: [sast]
+    if: github.event_name == 'pull_request'
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_sca.yml@develop
+    with:
+      service-name: frontend
+      service-path: .
+      runtime: node
+      environment: development
+    secrets:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  trivy:
+    needs: [sca]
+    if: github.event_name == 'pull_request'
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_docker-build.yml@develop
+    with:
+      service-name: nutritrack-frontend
+      service-path: .
+
+  # Single PR Check
+  pr-check:
+    name: PR Quality Gate
+    needs: [sast, sca, trivy]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "All checks passed"
+
+
+  # DEVELOP (AFTER MERGE)
+  
+  dev-publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_docker-publish.yml@develop
+    with:
+      image-name: nutritrack-frontend
+      tag: dev-${{ github.sha }}
+      environment: development
+    secrets:
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+
+  # RELEASE (MAIN ONLY)
+
+  publish:
+    if: >-
+      github.event_name == 'release' &&
+      github.event.release.target_commitish == 'main' &&
+      github.event.release.prerelease == false
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_docker-publish.yml@develop
+    with:
+      image-name: nutritrack-frontend
+      tag: ${{ github.event.release.tag_name }}
+      environment: production
+    secrets:
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+
+  cd:
+    needs: [publish]
+    if: needs.publish.result == 'success'
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_cd-template.yml@develop
+    with:
+      service-name: frontend
+      image-tag: ${{ github.event.release.tag_name }}
+      branch: main
+      environment: production
+    secrets:
+      HELM_REPO_PAT: ${{ secrets.HELM_REPO_PAT }}
