@@ -21,7 +21,7 @@ jobs:
 
   sast:
     if: github.event_name == 'pull_request'
-    uses: Nutri-Track/nutritrack-shared/.github/workflows/_sast.yml@develop
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_sast.yml@v1
     with:
       service-path: .
       environment: development
@@ -32,7 +32,7 @@ jobs:
   sca:
     needs: [sast]
     if: github.event_name == 'pull_request'
-    uses: Nutri-Track/nutritrack-shared/.github/workflows/_sca.yml@develop
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_sca.yml@v1
     with:
       service-name: frontend
       service-path: .
@@ -41,18 +41,48 @@ jobs:
     secrets:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-  trivy:
+  notify-snyk:
     needs: [sca]
+    if: always() && needs.sca.outputs.critical-found == 'true'
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_notify.yml@v1
+    with:
+      subject: "🚨 Snyk: Critical Vulnerabilities in frontend"
+      body: "Critical/High vulnerabilities found in frontend dependencies."
+      service-name: frontend
+      artifact-name: snyk-report-frontend
+      environment: development
+    secrets:
+      BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+      NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+
+  # ─── Temp Docker Build + Trivy Scan ───
+  build:
+    needs: [sast, sca]
     if: github.event_name == 'pull_request'
-    uses: Nutri-Track/nutritrack-shared/.github/workflows/_docker-build.yml@develop
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_docker-build.yml@v1
     with:
       service-name: nutritrack-frontend
       service-path: .
 
+  # ─── Notify: Trivy Criticals ───
+  notify-trivy:
+    needs: [build]
+    if: always() && needs.build.outputs.trivy-critical == 'true'
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_notify.yml@v1
+    with:
+      subject: "🚨 Trivy: Critical Vulnerabilities in frontend"
+      body: "CRITICAL vulnerabilities found in frontend Docker image."
+      service-name: frontend
+      artifact-name: trivy-nutritrack-frontend
+      environment: development
+    secrets:
+      BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+      NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+
   # Single PR Check
   pr-check:
     name: PR Quality Gate
-    needs: [sast, sca, trivy]
+    needs: [sast, sca, build]
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -63,7 +93,7 @@ jobs:
   
   dev-publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-    uses: Nutri-Track/nutritrack-shared/.github/workflows/_docker-publish.yml@develop
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_docker-publish.yml@v1
     with:
       image-name: nutritrack-frontend
       tag: dev-${{ github.sha }}
@@ -79,7 +109,7 @@ jobs:
       github.event_name == 'release' &&
       github.event.release.target_commitish == 'main' &&
       github.event.release.prerelease == false
-    uses: Nutri-Track/nutritrack-shared/.github/workflows/_docker-publish.yml@develop
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_docker-publish.yml@v1
     with:
       image-name: nutritrack-frontend
       tag: ${{ github.event.release.tag_name }}
@@ -91,7 +121,7 @@ jobs:
   cd:
     needs: [publish]
     if: needs.publish.result == 'success'
-    uses: Nutri-Track/nutritrack-shared/.github/workflows/_cd-template.yml@develop
+    uses: Nutri-Track/nutritrack-shared/.github/workflows/_cd-template.yml@v1
     with:
       service-name: frontend
       image-tag: ${{ github.event.release.tag_name }}
